@@ -11,19 +11,47 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from urllib.parse import urlparse
 
-def save_article_to_file(title, content, images=None, filename="article.txt"):
+# 定义版权信息的正则表达式
+COPYRIGHT_PATTERN = re.compile(r'©\s*2025\s*Mafengwo\.cn\s*京ICP备.*$', re.DOTALL | re.MULTILINE)
+
+def sanitize_folder_name(folder_name):
+    """清理文件夹名称，移除非法字符"""
+    # 移除或替换Windows和MacOS不允许的文件名字符
+    invalid_chars = '<>:"/\\|?*\n\r\t'
+    for char in invalid_chars:
+        folder_name = folder_name.replace(char, '_')
+    # 移除前导和尾随空格，限制长度
+    folder_name = folder_name.strip()[:50]  # 限制长度为50个字符
+    return folder_name
+
+def clean_content(content):
+    """清理文章内容，删除版权信息"""
+    # 匹配并删除版权信息及其后的所有内容
+    cleaned_content = COPYRIGHT_PATTERN.sub('', content)
+    return cleaned_content.strip()
+
+def save_article_to_file(title, content, images=None, filename="article.txt", folder_path=None):
     """将爬取的文章保存到文件"""
-    with open(filename, "w", encoding="utf-8") as f:
+    # 确定完整的文件路径
+    if folder_path:
+        file_path = os.path.join(folder_path, filename)
+    else:
+        file_path = filename
+    
+    # 清理内容中的版权信息
+    cleaned_content = clean_content(content)
+    
+    with open(file_path, "w", encoding="utf-8") as f:
         f.write(f"标题: {title}\n\n")
         f.write("正文内容:\n\n")
-        f.write(content)
+        f.write(cleaned_content)
         
         # 添加图片信息
         if images:
             f.write("\n\n图片信息:\n\n")
             for i, image_info in enumerate(images, 1):
                 f.write(f"图片 {i}: {image_info['filename']} (原URL: {image_info['url']})\n")
-    print(f"\n文章已保存到文件: {filename}")
+    print(f"\n文章已保存到文件: {file_path}")
 
 def setup_selenium_driver(headless=True):
     """设置Selenium WebDriver"""
@@ -222,11 +250,9 @@ def fetch_images(driver, max_images=10, images_dir="images"):
     print(f"成功下载 {len(downloaded_images)} 张图片")
     return downloaded_images
 
-def fetch_with_selenium(url, headless=True, max_retries=3, output_filename="article.txt", images_dir="images"):
+def fetch_with_selenium(url, headless=True, max_retries=3):
     """使用Selenium爬取马蜂窝文章"""
     print(f"开始使用Selenium爬取: {url}")
-    print(f"输出文件: {output_filename}")
-    print(f"图片保存目录: {images_dir}")
     
     retry_count = 0
     while retry_count < max_retries:
@@ -280,6 +306,24 @@ def fetch_with_selenium(url, headless=True, max_retries=3, output_filename="arti
                 except Exception as e:
                     print(f"获取标题时出错: {type(e).__name__}: {e}")
                     continue
+            
+            # 创建以文章标题命名的文件夹
+            sanitized_title = sanitize_folder_name(title)
+            article_folder = sanitized_title
+            
+            # 处理文件夹名冲突
+            counter = 1
+            original_folder = article_folder
+            while os.path.exists(article_folder):
+                article_folder = f"{original_folder}_{counter}"
+                counter += 1
+            
+            # 创建文章文件夹
+            os.makedirs(article_folder, exist_ok=True)
+            print(f"创建文章文件夹: {article_folder}")
+            
+            # 图片保存目录（在文章文件夹内）
+            images_dir = os.path.join(article_folder, "images")
             
             # 尝试不同的方法获取正文内容
             content = ""
@@ -394,8 +438,9 @@ def fetch_with_selenium(url, headless=True, max_retries=3, output_filename="arti
             content_preview = content[:200].replace('\n', ' ')
             print(f"{content_preview}...\n")
             
-            # 保存文章到文件
-            save_article_to_file(title, content, images, filename=output_filename)
+            # 保存文章到文件（保存在文章文件夹中）
+            output_filename = "article.txt"
+            save_article_to_file(title, content, images, filename=output_filename, folder_path=article_folder)
             
             print("爬取成功！")
             return True
@@ -448,14 +493,8 @@ def main():
         print(f"\n=== 开始爬取第 {i} 个URL ===")
         print(f"目标URL: {url}")
         
-        # 生成唯一的输出文件名和图片目录
-        output_filename = f"article_{i}.txt"
-        images_dir = f"images_{i}"
-        
-        # 执行爬取
-        success = fetch_with_selenium(url, headless=headless, max_retries=3, 
-                                     output_filename=output_filename, 
-                                     images_dir=images_dir)
+        # 执行爬取 - 现在不需要指定输出文件名和图片目录，会自动创建以标题命名的文件夹
+        success = fetch_with_selenium(url, headless=headless, max_retries=3)
         
         if success:
             print(f"\n第 {i} 个URL爬取成功完成！")
